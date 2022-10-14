@@ -30,12 +30,7 @@ module Cucumber
         @features_data = Hash.new do |h, k|
           h[k] = {
             feature: nil,
-            failures: 0,
-            errors: 0,
-            tests: 0,
-            skipped: 0,
-            time: 0,
-            builder: Builder::XmlMarkup.new(indent: 2)
+            test_case_results: Hash.new { |ha, ke| ha[ke] = [] }
           }
         end
       end
@@ -64,7 +59,13 @@ module Cucumber
         scenario = test_case_name.scenario_name
         scenario_designation = "#{scenario}#{test_case_name.name_suffix}"
         output = create_output_string(test_case, scenario, result, test_case_name.row_name)
-        build_testcase(result, scenario_designation, output)
+        @current_feature_data[:test_case_results][test_case] << {
+          result: result,
+          scenario_designation: scenario_designation,
+          output: output,
+          interceptedout: strip_control_chars(@interceptedout.buffer_string),
+          interceptederr: strip_control_chars(@interceptederr.buffer_string)
+        }
 
         Interceptor::Pipe.unwrap! :stdout
         Interceptor::Pipe.unwrap! :stderr
@@ -91,17 +92,37 @@ module Cucumber
       end
 
       def end_feature(feature_data)
+        result_data = {
+          uri: feature_data[:uri],
+          feature: feature_data[:feature],
+          failures: 0,
+          errors: 0,
+          tests: 0,
+          skipped: 0,
+          time: 0,
+          builder: Builder::XmlMarkup.new(indent: 2)
+        }
+
+        feature_data[:test_case_results].values.each do |results|
+          results_that_passed = results.select { |result| result[:result].passed? }
+          report_flaky_strictly = @config.strict.strict?(:flaky)
+          results = results_that_passed.any? && !report_flaky_strictly ? results_that_passed : results
+          results.each_with_object(result_data) do |result, result_data|
+            build_testcase(result_data, result)
+          end
+        end
+
         @testsuite = Builder::XmlMarkup.new(indent: 2)
         @testsuite.instruct!
         @testsuite.testsuite(
-          failures: feature_data[:failures],
-          errors: feature_data[:errors],
-          skipped: feature_data[:skipped],
-          tests: feature_data[:tests],
-          time: format('%<time>.6f', time: feature_data[:time]),
+          failures: result_data[:failures],
+          errors: result_data[:errors],
+          skipped: result_data[:skipped],
+          tests: result_data[:tests],
+          time: format('%<time>.6f', time: result_data[:time]),
           name: feature_data[:feature].name
         ) do
-          @testsuite << feature_data[:builder].target!
+          @testsuite << result_data[:builder].target!
         end
 
         write_file(feature_result_filename(feature_data[:uri]), @testsuite.target!)
@@ -130,36 +151,37 @@ module Cucumber
         "#{output}\nMessage:\n"
       end
 
-      def build_testcase(result, scenario_designation, output)
+      def build_testcase(feature_result, result_data)
+        result = result_data[:result]
         duration = ResultBuilder.new(result).test_case_duration
-        @current_feature_data[:time] += duration
-        classname = @current_feature_data[:feature].name
-        filename = @current_feature_data[:uri]
-        name = scenario_designation
+        feature_result[:time] += duration
+        classname = feature_result[:feature].name
+        filename = feature_result[:uri]
+        name = result_data[:scenario_designation]
 
         testcase_attributes = get_testcase_attributes(classname, name, duration, filename)
 
-        @current_feature_data[:builder].testcase(testcase_attributes) do
+        feature_result[:builder].testcase(testcase_attributes) do
           if !result.passed? && result.ok?(@config.strict)
-            @current_feature_data[:builder].skipped
-            @current_feature_data[:skipped] += 1
+            feature_result[:builder].skipped
+            feature_result[:skipped] += 1
           elsif !result.passed?
             status = result.to_sym
             exception = get_backtrace_object(result)
-            @current_feature_data[:builder].failure(message: "#{status} #{name}", type: status) do
-              @current_feature_data[:builder].cdata! output
-              @current_feature_data[:builder].cdata!(format_exception(exception)) if exception
+            feature_result[:builder].failure(message: "#{status} #{name}", type: status) do
+              feature_result[:builder].cdata! result_data[:output]
+              feature_result[:builder].cdata!(format_exception(exception)) if exception
             end
-            @current_feature_data[:failures] += 1
+            feature_result[:failures] += 1
           end
-          @current_feature_data[:builder].tag!('system-out') do
-            @current_feature_data[:builder].cdata! strip_control_chars(@interceptedout.buffer_string)
+          feature_result[:builder].tag!('system-out') do
+            feature_result[:builder].cdata! result_data[:interceptedout]
           end
-          @current_feature_data[:builder].tag!('system-err') do
-            @current_feature_data[:builder].cdata! strip_control_chars(@interceptederr.buffer_string)
+          feature_result[:builder].tag!('system-err') do
+            feature_result[:builder].cdata! result_data[:interceptederr]
           end
         end
-        @current_feature_data[:tests] += 1
+        feature_result[:tests] += 1
       end
 
       def get_testcase_attributes(classname, name, duration, filename)

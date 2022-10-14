@@ -487,6 +487,70 @@ You *must* specify --out DIR for the junit formatter
 
       """
 
+  Scenario: no-strict-flaky mode with --retry 2 option, one scenario that fails once, then passes
+    Given a scenario "Fails-once" that fails once, then passes
+    When I run `cucumber --no-strict-flaky --retry 2 --format junit --out tmp/ features/fails-once_feature.feature --publish-quiet`
+    Then it should pass with exactly:
+      """
+
+      """
+    And the junit output file "tmp/TEST-features-fails-once_feature.xml" should contain:
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuite failures="0" errors="0" skipped="0" tests="1" time="0.05" name="Fails-once feature">
+      <testcase classname="Fails-once feature" name="Fails-once" time="0.05">
+        <system-out>
+          <![CDATA[]]>
+        </system-out>
+        <system-err>
+          <![CDATA[]]>
+        </system-err>
+      </testcase>
+      </testsuite>
+      """
+
+  Scenario: strict-flaky mode with --retry 2 option, one scenario that fails once, then passes
+    Given a scenario "Fails-once" that fails once, then passes
+    When I run `cucumber --strict-flaky --retry 2 --format junit --out tmp/ features/fails-once_feature.feature --publish-quiet`
+    Then it should fail with exactly:
+      """
+
+      """
+    And the junit output file "tmp/TEST-features-fails-once_feature.xml" should contain:
+      """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <testsuite failures="1" errors="0" skipped="0" tests="2" time="0.05" name="Fails-once feature">
+      <testcase classname="Fails-once feature" name="Fails-once" time="0.05">
+        <failure message="failed Fails-once" type="failed">
+          <![CDATA[Scenario: Fails-once
+
+      Given it fails once, then passes
+
+      Message:
+      ]]>
+          <![CDATA[expected: > 1
+           got:   1 (RSpec::Expectations::ExpectationNotMetError)
+      ./features/step_definitions/fails_once_steps.rb:3:in `/^it fails once, then passes$/'
+      features/fails-once_feature.feature:3:in `it fails once, then passes']]>
+        </failure>
+        <system-out>
+          <![CDATA[]]>
+        </system-out>
+        <system-err>
+          <![CDATA[]]>
+        </system-err>
+      </testcase>
+      <testcase classname="Fails-once feature" name="Fails-once" time="0.05">
+        <system-out>
+          <![CDATA[]]>
+        </system-out>
+        <system-err>
+          <![CDATA[]]>
+        </system-err>
+      </testcase>
+      </testsuite>
+      """
+
   Scenario: run test cases from different features interweaved
     When I run `cucumber --format junit --out tmp/ features/one_passing_one_failing.feature:3 features/pending.feature:3 features/one_passing_one_failing.feature:6`
     Then it should fail with:
